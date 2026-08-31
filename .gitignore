@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.pt
+*.onnx
+*.engine
+*.tflite
+runs/
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+.DS_Store

@@ -1,0 +1,126 @@
+import argparse
+import sys
+import os
+import time
+import threading
+import json
+import cv2
+import requests
+import uvicorn
+
+from team2_shopper.tracker import ShopperTrackerPipeline
+from team3_shelf.shelf_engine import ShelfEngine
+from dashboard.preview_hud import draw_hud_overlay
+from dashboard.cli_dashboard import run_cli_dashboard
+
+def load_config(config_path="config/store_config.json") -> dict:
+    with open(config_path, "r") as f:
+        return json.load(f)
+
+def run_backend():
+    print("[Backend] Starting FastAPI Server on http://127.0.0.1:8000 ...")
+    uvicorn.run("team3_backend.app:app", host="127.0.0.1", port=8000, log_level="warning")
+
+def run_vision_loop(config: dict, source, show_hud: bool = True):
+    backend_url = config.get("backend_url", "http://127.0.0.1:8000")
+    print(f"[Vision Engine] Initializing Camera / Video Source ({source})...")
+
+    # Try opening camera
+    cap = None
+    if str(source).isdigit():
+        cap = cv2.VideoCapture(int(source))
+    else:
+        cap = cv2.VideoCapture(source)
+
+    shopper_pipeline = ShopperTrackerPipeline(config)
+    shelf_engine = ShelfEngine(config)
+
+    print("[Vision Engine] Processing loop active. Press q on video window to stop.")
+
+    stats = {"in": 0, "out": 0, "fps": 30.0}
+
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            # Loop video file or restart
+            if not str(source).isdigit():
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                continue
+            else:
+                time.sleep(0.1)
+                continue
+
+        t_now = time.time()
+
+        # Run Shopper MOT & Footfall
+        tracks, shopper_events = shopper_pipeline.process_frame(frame, t_now)
+        
+        # Run Shelf & Planogram
+        detected_shelves, shelf_events = shelf_engine.process_frame(frame, t_now)
+
+        # Ingest to local backend
+        all_events = shopper_events + shelf_events
+        for ev in all_events:
+            try:
+                requests.post(f"{backend_url}/api/v1/events", json=ev.model_dump(), timeout=0.2)
+                if ev.event_type == "footfall":
+                    stats["in"] = ev.payload.get("running_total_in", stats["in"])
+                    stats["out"] = ev.payload.get("running_total_out", stats["out"])
+            except Exception:
+                pass
+
+        if show_hud:
+            hud_frame = draw_hud_overlay(frame, tracks, detected_shelves, config, stats)
+            if hud_frame is not None:
+                cv2.imshow("Retail Intelligence Platform - Live Edge Preview", hud_frame)
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+def main():
+    parser = argparse.ArgumentParser(description="Edge AI Retail Intelligence Platform")
+    parser.add_argument("--mode", choices=["live", "mock", "dashboard-only", "server-only"], default="live",
+                        help="Execution mode: live (camera), mock (synthetic generator), dashboard-only, server-only")
+    parser.add_argument("--camera", default="0", help="Camera index or path to video file (default: 0)")
+    parser.add_argument("--no-gui", action="store_true", help="Disable OpenCV video preview window")
+    args = parser.parse_args()
+
+    config = load_config()
+
+    if args.mode == "server-only":
+        run_backend()
+        return
+
+    if args.mode == "dashboard-only":
+        run_cli_dashboard()
+        return
+
+    # Start FastAPI server in a background daemon thread
+    server_thread = threading.Thread(target=run_backend, daemon=True)
+    server_thread.start()
+    time.sleep(1.5) # Wait for server startup
+
+    if args.mode == "mock":
+        # Start mock generator in background thread
+        from scripts.mock_event_stream import generate_mock_stream
+        mock_thread = threading.Thread(target=generate_mock_stream, daemon=True)
+        mock_thread.start()
+        print("[Launcher] Mock stream active. Launching CLI Dashboard...")
+        run_cli_dashboard()
+
+    elif args.mode == "live":
+        # Launch vision loop in separate thread if GUI dashboard is running in main thread
+        vision_thread = threading.Thread(
+            target=run_vision_loop,
+            args=(config, args.camera, not args.no_gui),
+            daemon=True
+        )
+        vision_thread.start()
+        
+        # Run Rich Live CLI Dashboard in main thread
+        run_cli_dashboard()
+
+if __name__ == "__main__":
+    main()

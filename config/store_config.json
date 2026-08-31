@@ -1,0 +1,226 @@
+{
+  "store_id": "store_001",
+  "store_name": "SmartRetail Flagship Alpha",
+  "camera": {
+    "device_index": 0,
+    "width": 640,
+    "height": 480,
+    "fps": 30
+  },
+  "virtual_lines": [
+    {
+      "id": "entrance_line_1",
+      "name": "Main Entrance Gate",
+      "p1": [
+        100,
+        240
+      ],
+      "p2": [
+        540,
+        240
+      ],
+      "direction_in": "down",
+      "debounce_seconds": 1.5
+    }
+  ],
+  "zones": [
+    {
+      "id": "aisle_1_beverages",
+      "name": "Aisle 1 - Beverages & Sodas",
+      "polygon": [
+        [
+          50,
+          50
+        ],
+        [
+          250,
+          50
+        ],
+        [
+          250,
+          220
+        ],
+        [
+          50,
+          220
+        ]
+      ],
+      "type": "shopping_aisle"
+    },
+    {
+      "id": "aisle_2_snacks",
+      "name": "Aisle 2 - Snacks & Packaged Foods",
+      "polygon": [
+        [
+          350,
+          50
+        ],
+        [
+          590,
+          50
+        ],
+        [
+          590,
+          220
+        ],
+        [
+          350,
+          220
+        ]
+      ],
+      "type": "shopping_aisle"
+    },
+    {
+      "id": "checkout_zone_1",
+      "name": "Checkout Counter 1",
+      "polygon": [
+        [
+          100,
+          300
+        ],
+        [
+          300,
+          300
+        ],
+        [
+          300,
+          450
+        ],
+        [
+          100,
+          450
+        ]
+      ],
+      "type": "queue_zone",
+      "max_capacity": 4,
+      "warning_threshold": 3,
+      "congested_threshold": 5
+    },
+    {
+      "id": "checkout_zone_2",
+      "name": "Checkout Counter 2 (Overflow)",
+      "polygon": [
+        [
+          340,
+          300
+        ],
+        [
+          540,
+          300
+        ],
+        [
+          540,
+          450
+        ],
+        [
+          340,
+          450
+        ]
+      ],
+      "type": "queue_zone",
+      "max_capacity": 4,
+      "warning_threshold": 3,
+      "congested_threshold": 5
+    }
+  ],
+  "homography": {
+    "enabled": true,
+    "grid_rows": 20,
+    "grid_cols": 20,
+    "src_points": [
+      [
+        50,
+        50
+      ],
+      [
+        590,
+        50
+      ],
+      [
+        590,
+        450
+      ],
+      [
+        50,
+        450
+      ]
+    ],
+    "dst_points": [
+      [
+        0,
+        0
+      ],
+      [
+        19,
+        0
+      ],
+      [
+        19,
+        19
+      ],
+      [
+        0,
+        19
+      ]
+    ]
+  },
+  "shelves": [
+    {
+      "shelf_id": "shelf_A1_top",
+      "zone_id": "aisle_1_beverages",
+      "bounding_box": [
+        60,
+        60,
+        240,
+        130
+      ],
+      "expected_sku": "bottle",
+      "sku_name": "Premium Sparkling Water 500ml",
+      "target_count": 4,
+      "min_stock_alert": 2
+    },
+    {
+      "shelf_id": "shelf_A1_bottom",
+      "zone_id": "aisle_1_beverages",
+      "bounding_box": [
+        60,
+        140,
+        240,
+        210
+      ],
+      "expected_sku": "cup",
+      "sku_name": "Energy Drink Can 250ml",
+      "target_count": 4,
+      "min_stock_alert": 1
+    },
+    {
+      "shelf_id": "shelf_B1_top",
+      "zone_id": "aisle_2_snacks",
+      "bounding_box": [
+        360,
+        60,
+        580,
+        130
+      ],
+      "expected_sku": "box",
+      "sku_name": "Artisan Cereal & Granola",
+      "target_count": 3,
+      "min_stock_alert": 1
+    },
+    {
+      "shelf_id": "shelf_B1_bottom",
+      "zone_id": "aisle_2_snacks",
+      "bounding_box": [
+        360,
+        140,
+        580,
+        210
+      ],
+      "expected_sku": "book",
+      "sku_name": "Magazine & Snack Bar Pack",
+      "target_count": 3,
+      "min_stock_alert": 1
+    }
+  ],
+  "backend_url": "http://127.0.0.1:8000"
+}
