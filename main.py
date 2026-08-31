@@ -11,27 +11,45 @@ import uvicorn
 
 from team2_shopper.tracker import ShopperTrackerPipeline
 from team3_shelf.shelf_engine import ShelfEngine
+from team3_backend.app import app
 from dashboard.preview_hud import draw_hud_overlay
 from dashboard.cli_dashboard import run_cli_dashboard
 
-def load_config(config_path="config/store_config.json") -> dict:
-    with open(config_path, "r") as f:
+def get_default_config_path() -> str:
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "config", "store_config.json")
+
+def load_config(config_path: str = None) -> dict:
+    if config_path is None:
+        config_path = get_default_config_path()
+    with open(config_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 def run_backend():
     print("[Backend] Starting FastAPI Server on http://127.0.0.1:8000 ...")
-    uvicorn.run("team3_backend.app:app", host="127.0.0.1", port=8000, log_level="warning")
+    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="warning")
+
+def open_capture_device(source):
+    if str(source).isdigit():
+        idx = int(source)
+        # Windows DirectShow backend opens cameras faster without timeout lag
+        if sys.platform.startswith("win"):
+            cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+            if not cap.isOpened():
+                cap = cv2.VideoCapture(idx)
+        else:
+            cap = cv2.VideoCapture(idx)
+    else:
+        cap = cv2.VideoCapture(source)
+    return cap
 
 def run_vision_loop(config: dict, source, show_hud: bool = True):
     backend_url = config.get("backend_url", "http://127.0.0.1:8000")
     print(f"[Vision Engine] Initializing Camera / Video Source ({source})...")
 
-    # Try opening camera
-    cap = None
-    if str(source).isdigit():
-        cap = cv2.VideoCapture(int(source))
-    else:
-        cap = cv2.VideoCapture(source)
+    cap = open_capture_device(source)
+    if not cap.isOpened():
+        print(f"[Vision Engine] Error: Could not open video source {source}. Please verify camera index.")
+        return
 
     shopper_pipeline = ShopperTrackerPipeline(config)
     shelf_engine = ShelfEngine(config)
@@ -43,7 +61,6 @@ def run_vision_loop(config: dict, source, show_hud: bool = True):
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
-            # Loop video file or restart
             if not str(source).isdigit():
                 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 continue
@@ -85,10 +102,11 @@ def main():
     parser.add_argument("--mode", choices=["live", "mock", "dashboard-only", "server-only"], default="live",
                         help="Execution mode: live (camera), mock (synthetic generator), dashboard-only, server-only")
     parser.add_argument("--camera", default="0", help="Camera index or path to video file (default: 0)")
+    parser.add_argument("--config", default=None, help="Path to store_config.json")
     parser.add_argument("--no-gui", action="store_true", help="Disable OpenCV video preview window")
     args = parser.parse_args()
 
-    config = load_config()
+    config = load_config(args.config)
 
     if args.mode == "server-only":
         run_backend()
@@ -104,7 +122,6 @@ def main():
     time.sleep(1.5) # Wait for server startup
 
     if args.mode == "mock":
-        # Start mock generator in background thread
         from scripts.mock_event_stream import generate_mock_stream
         mock_thread = threading.Thread(target=generate_mock_stream, daemon=True)
         mock_thread.start()
@@ -112,7 +129,6 @@ def main():
         run_cli_dashboard()
 
     elif args.mode == "live":
-        # Launch vision loop in separate thread if GUI dashboard is running in main thread
         vision_thread = threading.Thread(
             target=run_vision_loop,
             args=(config, args.camera, not args.no_gui),

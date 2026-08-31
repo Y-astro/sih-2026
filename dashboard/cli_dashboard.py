@@ -1,5 +1,14 @@
+import sys
 import time
 import requests
+
+# Ensure UTF-8 output on Windows PowerShell / Command Prompt
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 from rich.console import Console
 from rich.layout import Layout
 from rich.panel import Panel
@@ -163,7 +172,7 @@ def build_dashboard_layout(data: dict) -> Layout:
 
     # Footer
     footer_text = Text.from_markup(
-        "[dim]Press Ctrl+C to exit. System running offline-first edge compute on NVIDIA RTX. All PII discarded on device.[/dim]"
+        "[dim]Press Ctrl+C to exit. System running offline-first edge compute. All PII discarded on device.[/dim]"
     )
     layout["footer"].update(Panel(Align.center(footer_text), style="dim"))
 
