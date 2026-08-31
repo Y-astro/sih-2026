@@ -13,7 +13,7 @@ def draw_hud_overlay(frame: np.ndarray, tracks: list, detected_shelves: list, co
         p1 = tuple(line["p1"])
         p2 = tuple(line["p2"])
         cv2.line(vis, p1, p2, (0, 255, 255), 3)
-        cv2.putText(vis, f"ENTRY LINE: {line.get(id)}", (p1[0], p1[1] - 8),
+        cv2.putText(vis, f"ENTRY LINE: {line.get('id', '')}", (p1[0], p1[1] - 8),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
 
     # 2. Draw Zones
@@ -28,7 +28,7 @@ def draw_hud_overlay(frame: np.ndarray, tracks: list, detected_shelves: list, co
     for shelf in config.get("shelves", []):
         x1, y1, x2, y2 = shelf["bounding_box"]
         cv2.rectangle(vis, (x1, y1), (x2, y2), (200, 50, 255), 2)
-        cv2.putText(vis, f"SHELF: {shelf.get(expected_sku)}", (x1, y1 - 5),
+        cv2.putText(vis, f"SHELF: {shelf.get('expected_sku', '')}", (x1, y1 - 5),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 50, 255), 1)
 
     # 4. Draw Person Tracks
@@ -45,7 +45,11 @@ def draw_hud_overlay(frame: np.ndarray, tracks: list, detected_shelves: list, co
 
     # 5. Top Bar HUD Info
     cv2.rectangle(vis, (0, 0), (w, 40), (20, 20, 20), -1)
-    hud_str = f"FPS: {stats.get(fps, 30):.1f} | In: {stats.get(in, 0)} | Out: {stats.get(out, 0)} | Tracks: {len(tracks)}"
+    fps_val = stats.get("fps", 30.0)
+    in_val = stats.get("in", 0)
+    out_val = stats.get("out", 0)
+    num_tracks = len(tracks)
+    hud_str = f"FPS: {fps_val:.1f} | In: {in_val} | Out: {out_val} | Tracks: {num_tracks}"
     cv2.putText(vis, hud_str, (15, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
     return vis
