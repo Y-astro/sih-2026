@@ -1,93 +1,152 @@
 # Edge AI Retail Intelligence Platform (SIH 2026)
 
-An offline-first, edge-native retail intelligence platform combining **Shopper Footfall & Queue Intelligence (Duo 2)** and **Shelf Monitoring & Operations Dashboard (Duo 3)** with zero cloud video transmission and zero PII storage.
+An offline-first, edge-native retail intelligence platform combining **Shopper Footfall & Queue Intelligence** and **Shelf Monitoring & Operations Dashboard** with zero raw video transmission and zero PII storage.
 
 ---
 
-## 🏛️ Architecture Overview
+## 🏛️ System Architecture
 
 ```
-[Webcam / RTSP Video Feed]
-          │
-  ┌───────┴────────────────────────┐
-  ▼                                ▼
-[Team 2: Shopper AI]      [Team 3: Shelf AI]
-• YOLOv8 + ByteTrack MOT  • Shelf Zone Object Detection
-• Entry/Exit Line Counter • Planogram Compliance Check
-• Aisle Dwell Time Engine • OOS & Low-Stock Detection
-• Queue Wait Estimation   • Automated Restock Trigger
-• 20x20 Density Matrix    
-          │                                │
-          └────────────────┬───────────────┘
-                           │ Standard JSON Event Stream
-                           ▼
-          [Team 3: FastAPI Backend & Event Hub]
-          • Ingestion API (`POST /api/v1/events`)
-          • SQLite Event Store & State Store
-          • Mock WMS / ERP Webhook Trigger
-          • WebSocket Broadcaster (`/ws/feed`)
-                           │
-                           ▼
-          [Team 3: Operations Dashboard & HUD]
-          • Rich CLI Terminal Live TUI
-          • Real-time 20x20 ASCII / Color Heatmap
-          • Live Footfall, Queue & Alert Panels
-          • OpenCV Visual HUD Overlay
+[Webcam / RTSP Stream / Synthetic Video]
+                  │
+        ┌─────────┴─────────┐
+        ▼                   ▼
+[Shopper & Queue AI]   [Shelf & Planogram AI]
+• YOLOv8 + ByteTrack   • Shelf Bin Object Detection
+• In/Out Line Counter  • Planogram Compliance Check
+• Aisle Dwell Time     • Out-of-Stock (OOS) Alerts
+• Queue Congestion     • Automated WMS Restock Trigger
+• 20x20 Density Matrix └───────────┬───────────┘
+        │                          │
+        └────────────┬─────────────┘
+                     │ Standard JSON Event Stream
+                     ▼
+       [FastAPI Backend & WebSocket Hub]
+       • Ingestion API (`POST /api/v1/events`)
+       • Idempotent State Store (UUIDs + UTC ISO Timestamps)
+       • WMS / ERP Restock Ticket Dispatcher
+       • Real-Time WebSocket Broadcaster (`/ws/feed`)
+                     │
+                     ▼
+       [Operations Dashboard & Visual HUD]
+       • Rich CLI Terminal Live TUI
+       • Real-Time 20x20 ASCII / ANSI Floor Heatmap
+       • Live Occupancy, Queue, & Alert Panels
+       • OpenCV Visual HUD Overlay Window
 ```
+
+---
+
+## ✨ Key Features
+
+- **Privacy-by-Design & Zero PII:** All inference runs on-device. No facial recognition models or biometric embeddings are stored or transmitted. Track IDs reset on exit.
+- **Multi-Object Tracking (MOT):** Real-time person tracking with ByteTrack, virtual line-crossing footfall counting (directional entry/exit), and aisle polygon dwell-time measurement.
+- **Top-Down Spatial Analytics:** Angle-corrected perspective homography generating a continuous $20 \times 20$ normalized floor-plan density matrix.
+- **Queue Intelligence:** Monitors checkout queues in real time, computes wait times using queueing principles (Little's Law approximation), and triggers proactive congestion alerts.
+- **Automated Shelf Audit & WMS Dispatch:** Checks shelf bins against planogram configurations, detects zero-stock/low-stock states, and automatically dispatches restock tickets (`WMS-TK-XXXX`).
+- **Low-Bandwidth & Offline Resilient:** Transmits only lightweight structured JSON events ($\\approx 1\\text{ KB}$ per payload) rather than streaming video feeds to the cloud.
+
+---
+
+## 🛠️ Prerequisites
+
+- **Python:** 3.10+ (tested on Python 3.12)
+- **OS:** Linux, macOS, or Windows
+- **Camera:** Standard USB webcam, laptop integrated camera, or RTSP IP camera feed (optional for mock mode)
+- **Hardware Acceleration (Optional):** NVIDIA GPU with CUDA for maximum inference FPS; runs efficiently on CPU as well.
 
 ---
 
 ## 🚀 Quick Start Guide
 
-### 1. Environment Setup
-The project uses a dedicated virtual environment with all required vision, geometry, and backend dependencies:
+### 1. Clone the Repository
 ```bash
-cd /home/astro/Projects/retail-intelligence-platform
+git clone https://github.com/Y-astro/sih-2026.git
+cd sih-2026
+```
+
+### 2. Set Up Virtual Environment & Dependencies
+
+Using standard `venv`:
+```bash
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\\Scripts\\activate
+pip install -r requirements.txt
+```
+
+*(Optional) Fast install using `uv`:*
+```bash
+uv venv .venv
 source .venv/bin/activate
+uv pip install -r requirements.txt
 ```
 
-### 2. Running the System
+### 3. Run the Application
 
-#### Mode A: Zero-Camera Mock Simulation (Perfect for Quick Demos & UI Testing)
-Runs the backend, simulates realistic footfall, queue congestion, out-of-stock events, and displays the live Rich CLI dashboard:
+#### Option A: Zero-Camera Mock Simulation (Instant Demo / UI Testing)
+Runs the backend, simulates realistic store traffic, queue buildup, out-of-stock events, and displays the interactive terminal dashboard:
 ```bash
-.venv/bin/python main.py --mode mock
+python main.py --mode mock
 ```
 
-#### Mode B: Live Webcam & Full Vision Pipeline
-Runs real-time YOLOv8 + ByteTrack person tracking and shelf auditing directly on your laptop webcam with the visual OpenCV HUD and terminal dashboard:
+#### Option B: Live Webcam & Full Edge Vision Pipeline
+Runs real-time YOLOv8 person tracking and shelf auditing on your webcam with the OpenCV visual HUD and live CLI dashboard:
 ```bash
-.venv/bin/python main.py --mode live --camera 0
+python main.py --mode live --camera 0
 ```
 
-#### Mode C: Server / Dashboard Separate Terminals
+#### Option C: Run Server and Dashboard in Separate Terminals
 ```bash
-# Terminal 1: Backend Server
-.venv/bin/python main.py --mode server-only
+# Terminal 1: Start FastAPI Backend
+python main.py --mode server-only
 
-# Terminal 2: CLI Operations Dashboard
-.venv/bin/python main.py --mode dashboard-only
+# Terminal 2: Launch CLI Operations Dashboard
+python main.py --mode dashboard-only
 ```
 
 ---
 
-## 📦 Key File Structure
+## 📂 Project Structure
 
-- `config/store_config.json`: Store layout, virtual crossing lines, aisle polygons, checkout zones, and expected planograms.
-- `schemas/events.py`: Shared Pydantic contract for `footfall`, `dwell`, `queue_state`, `density_matrix`, `shelf_oos`, and `system_status`.
-- `team2_shopper/`:
-  - `tracker.py`: YOLOv8 + ByteTrack MOT tracking pipeline.
-  - `footfall_engine.py`: Virtual line crossing with direction detection and debouncing.
-  - `dwell_engine.py`: Zone residence time tracking.
-  - `heatmap_engine.py`: Homography transform + 20x20 density grid matrix generator.
-  - `queue_engine.py`: Checkout queue length and congestion alert evaluator.
-- `team3_shelf/`:
-  - `shelf_engine.py`: Shelf gap/OOS detector and planogram compliance auditor.
-- `team3_backend/`:
-  - `app.py`: FastAPI server, REST routes, and WebSocket connection manager.
-  - `state_store.py`: In-memory & historical event state store.
-- `dashboard/`:
-  - `cli_dashboard.py`: Rich TUI terminal live dashboard with color heatmaps and KPI cards.
-  - `preview_hud.py`: OpenCV graphical visual overlay window.
-- `scripts/`:
-  - `mock_event_stream.py`: Standalone mock generator for testing.
+```
+.
+├── config/
+│   └── store_config.json      # Aisle zones, checkout polygons, lines & planogram configs
+├── schemas/
+│   └── events.py              # Pydantic schemas for footfall, dwell, queue, shelf & heatmap
+├── team2_shopper/
+│   ├── tracker.py             # YOLOv8 + ByteTrack tracking coordinator
+│   ├── footfall_engine.py     # Directional virtual line crossing with debouncing
+│   ├── dwell_engine.py        # Polygon-based aisle residence duration tracker
+│   ├── heatmap_engine.py      # Perspective homography & 20x20 density grid generator
+│   └── queue_engine.py        # Checkout occupancy & congestion alert evaluator
+├── team3_shelf/
+│   └── shelf_engine.py        # Shelf gap/OOS detector & planogram auditor
+├── team3_backend/
+│   ├── app.py                 # FastAPI server, REST ingestion API & WebSocket broadcaster
+│   └── state_store.py         # Live state management & automated WMS ticket dispatch
+├── dashboard/
+│   ├── cli_dashboard.py       # Rich terminal live TUI dashboard
+│   └── preview_hud.py         # OpenCV visual HUD overlay window
+├── scripts/
+│   └── mock_event_stream.py   # Standalone synthetic store event generator
+├── docs/                      # Team briefs and master design plans
+├── main.py                    # Unified CLI launcher
+└── requirements.txt           # Python dependency specifications
+```
+
+---
+
+## 📡 API Reference
+
+- `GET /` — Health check and service status.
+- `GET /api/v1/store/snapshot` — Retrieves current occupancy, queue metrics, shelf alert lists, and the $20 \times 20$ density matrix.
+- `POST /api/v1/events` — Ingestion endpoint for edge devices and vision pipelines.
+- `POST /api/v1/wms/restock-ticket` — Dispatches a restock ticket to store operations.
+- `WS /ws/feed` — Persistent WebSocket channel pushing real-time event updates to connected clients.
+
+---
+
+## 📄 License
+
+This project is developed for the Smart India Hackathon (SIH 2026).
