@@ -180,7 +180,7 @@ def build_dashboard_layout(data: dict) -> Layout:
 
 def run_cli_dashboard(backend_url: str = "http://127.0.0.1:8000"):
     console.print("[bold green]Connecting to Retail Intelligence Backend...[/]")
-    with Live(console=console, screen=True, refresh_per_second=4) as live:
+    with Live(console=console, screen=False, refresh_per_second=4) as live:
         while True:
             try:
                 resp = requests.get(f"{backend_url}/api/v1/store/snapshot", timeout=1.0)

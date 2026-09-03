@@ -1,23 +1,65 @@
-import cv2
-import numpy as np
-import json
-import os
+import time
 import sys
+import os
 
-# Ensure project root is on sys.path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, PROJECT_ROOT)
+
+# Auto-detect and switch to .venv if running with system python that lacks dependencies
+venv_python = os.path.join(
+    PROJECT_ROOT,
+    ".venv",
+    "Scripts" if sys.platform.startswith("win") else "bin",
+    "python.exe" if sys.platform.startswith("win") else "python"
+)
+if os.path.exists(venv_python) and os.path.abspath(sys.executable) != os.path.abspath(venv_python):
+    try:
+        import cv2
+    except ImportError:
+        if sys.platform.startswith("win"):
+            import subprocess
+            res = subprocess.call([venv_python] + sys.argv)
+            sys.exit(res)
+        else:
+            os.execv(venv_python, [venv_python] + sys.argv)
+
+import json
+
+# Ensure Qt compatibility on Linux Wayland/X11
+if not sys.platform.startswith("win"):
+    os.environ["QT_QPA_PLATFORM"] = "xcb"
+
+try:
+    import cv2
+    import numpy as np
+except ImportError as e:
+    print(f"\n[Environment Error] Missing required package: {e}")
+    print("Please activate your virtual environment before running:")
+    print("  Linux/macOS: source .venv/bin/activate")
+    print("  Windows:     .venv\\Scripts\\activate\n")
+    sys.exit(1)
 
 from team3_shelf.shelf_engine import ShelfEngine
+from team2_shopper.tracker import ShopperTrackerPipeline
 from core.geometry import scale_config_to_frame
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "store_config.json")
+CONFIG_PATH = os.path.join(PROJECT_ROOT, "config", "store_config.json")
 
 class VisualStoreCalibrator:
-    def __init__(self, source=0, config_path=CONFIG_PATH):
+    def __init__(self, source=0, config_path=CONFIG_PATH, clean=False):
         self.source = source
         self.config_path = config_path
         self.config = self.load_config()
+        if clean:
+            self.config['virtual_lines'] = []
+            self.config['zones'] = []
+            self.config['shelves'] = []
+            self.status_msg = "Blank slate mode active. Zero hardcoded boxes."
+        self.auto_detect_active = True
+        self.last_auto_detect_time = 0.0
+        self.auto_detect_interval = 0.2 # 5 per second (5 Hz)
         self.shelf_engine = ShelfEngine(self.config)
+        self.shopper_pipeline = ShopperTrackerPipeline(self.config)
 
         # Calibration state
         self.mode = "NAV" # NAV, LINE, AISLE, QUEUE, SHELF, HOMOGRAPHY
@@ -148,6 +190,25 @@ class VisualStoreCalibrator:
             h, w, _ = frame.shape
             vis = frame.copy()
 
+            # Continuous AI Auto-Detection (5 per second / 5 Hz)
+            t_now = time.time()
+            if self.auto_detect_active and (t_now - self.last_auto_detect_time) >= self.auto_detect_interval:
+                self.last_auto_detect_time = t_now
+                discovered_shelves = self.shelf_engine.auto_detect_shelves(frame, verbose=False)
+                self.config["shelves"] = discovered_shelves
+
+            # Real-time Shopper / Person Tracking
+            tracks, _ = self.shopper_pipeline.process_frame(frame, t_now)
+            for t in tracks:
+                bx = t["bbox"]
+                tid = t["track_id"]
+                conf = t.get("confidence", 0.8)
+                cv2.rectangle(vis, (int(bx[0]), int(bx[1])), (int(bx[2]), int(bx[3])), (0, 255, 0), 2)
+                cv2.putText(vis, f"Shopper #{tid} ({conf*100:.0f}%)", (int(bx[0]), max(15, int(bx[1]) - 8)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                cx, cy = int(t["centroid"][0]), int(t["centroid"][1])
+                cv2.circle(vis, (cx, cy), 4, (0, 0, 255), -1)
+
             # 1. Draw existing virtual lines
             for line in self.config.get("virtual_lines", []):
                 p1, p2 = tuple(line["p1"]), tuple(line["p2"])
@@ -184,12 +245,16 @@ class VisualStoreCalibrator:
             # 5. Top Bar HUD
             cv2.rectangle(vis, (0, 0), (w, 50), (25, 25, 25), -1)
             mode_color = (0, 255, 0) if self.mode == "NAV" else (0, 255, 255)
-            cv2.putText(vis, f"MODE: {self.mode}", (10, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, mode_color, 2)
+            status_col = (0, 255, 0) if self.auto_detect_active else (0, 200, 255)
+            auto_label = "AUTO-DETECT: 5/sec (RUNNING)" if self.auto_detect_active else "AUTO-DETECT: PAUSED"
+            n_shelves = len(self.config.get("shelves", []))
+            cv2.putText(vis, f"MODE: {self.mode} | {auto_label} | Shelves: {n_shelves}", (10, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.52, status_col, 2)
             cv2.putText(vis, self.status_msg, (10, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (220, 220, 220), 1)
 
             # 6. Bottom Helper Keys Bar
             cv2.rectangle(vis, (0, h - 30), (w, h), (20, 20, 20), -1)
-            keys_str = "[1] Line | [2] Aisle | [3] Queue | [4] Shelf | [5] Homography | [A] Auto-Detect | [S] Save | [Q] Exit"
+            auto_state = "ON" if self.auto_detect_active else "OFF"
+            keys_str = f"[A] Toggle Auto-Detect (5/sec: {auto_state}) | [S] Save | [X] Clear All | [1-5] Manual | [Q] Quit"
             cv2.putText(vis, keys_str, (10, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (180, 180, 180), 1)
 
             cv2.imshow(window_name, vis)
@@ -233,13 +298,17 @@ class VisualStoreCalibrator:
                     self.config["zones"].append(zone_def)
                     self.status_msg = f"Created Zone ({zone_def['id']}). Press [S] to Save."
                     self.current_points = []
-                    self.mode = "NAV"
+            elif key == ord('x') or key == ord('X'):
+                self.config['virtual_lines'] = []
+                self.config['zones'] = []
+                self.config['shelves'] = []
+                self.current_points = []
+                self.mode = "NAV"
+                self.status_msg = "CLEARED ALL TEMPLATES! Zero hardcoded boxes on screen. Press [S] to save clean state."
             elif key == ord('a') or key == ord('A'):
-                # Auto-Detect Shelves from current frame
-                self.status_msg = "Running AI Auto-Discovery on visible products..."
-                auto_shelves = self.shelf_engine.auto_detect_shelves(frame)
-                self.config["shelves"] = auto_shelves
-                self.status_msg = f"Auto-detected {len(auto_shelves)} shelf tier(s)! Press [S] to Save."
+                self.auto_detect_active = not self.auto_detect_active
+                st = "RESUMED (5/sec)" if self.auto_detect_active else "PAUSED"
+                self.status_msg = f"Auto-Detect is now {st}. Press [S] to Save, [Q] to Quit."
             elif key == ord('s') or key == ord('S'):
                 self.save_config()
             elif key == ord('r') or key == ord('R'):

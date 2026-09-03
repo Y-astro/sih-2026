@@ -33,7 +33,7 @@ class ShelfEngine:
         except Exception as e:
             print(f"[Team 3] Warning: YOLO shelf detector init ({e})")
 
-    def auto_detect_shelves(self, frame: np.ndarray, padding: int = 15) -> List[dict]:
+    def auto_detect_shelves(self, frame: np.ndarray, padding: int = 15, verbose: bool = False) -> List[dict]:
         """
         Dynamically discovers shelf tiers and SKU expectations from physical products
         in the camera view without hardcoded pixel coordinates.
@@ -50,6 +50,9 @@ class ShelfEngine:
             for box in results[0].boxes:
                 cls_id = int(box.cls[0].item())
                 cls_name = self.model.names.get(cls_id, "item")
+                # Filter for common retail items / objects
+                if cls_name in ["person"]:
+                    continue
                 xyxy = box.xyxy[0].cpu().numpy()
                 cx = float((xyxy[0] + xyxy[2]) / 2.0)
                 cy = float((xyxy[1] + xyxy[3]) / 2.0)
@@ -60,8 +63,7 @@ class ShelfEngine:
                 })
 
         if not detected:
-            print("[ShelfEngine] No retail objects detected for auto-configuration.")
-            return self.shelves
+            return []
 
         # Sort detected items by vertical position (top to bottom)
         detected.sort(key=lambda d: d["centroid"][1])
@@ -103,7 +105,8 @@ class ShelfEngine:
             }
             new_shelves.append(shelf_def)
 
-        print(f"[ShelfEngine] Auto-configured {len(new_shelves)} shelf tier(s) successfully!")
+        if verbose:
+            print(f"[ShelfEngine] Auto-configured {len(new_shelves)} shelf tier(s) successfully!")
         self.shelves = new_shelves
         self.config["shelves"] = new_shelves
         return new_shelves
