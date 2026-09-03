@@ -1,9 +1,19 @@
 import time
 import numpy as np
 from typing import List, Dict, Tuple
+from collections import Counter
 from schemas.events import BaseEvent, ShelfAlertPayload
 
 class ShelfEngine:
+    RETAIL_CLASSES = {
+        39: "bottle", 41: "cup", 40: "wine glass", 45: "bowl",
+        46: "banana", 47: "apple", 48: "sandwich", 49: "orange",
+        50: "broccoli", 51: "carrot", 52: "hot dog", 53: "pizza",
+        54: "donut", 55: "cake", 73: "book", 74: "clock",
+        75: "vase", 76: "scissors", 77: "teddy bear", 79: "toothbrush",
+        64: "potted plant", 67: "cell phone"
+    }
+
     def __init__(self, config: dict):
         self.config = config
         self.store_id = config.get("store_id", "store_001")
@@ -23,6 +33,81 @@ class ShelfEngine:
         except Exception as e:
             print(f"[Team 3] Warning: YOLO shelf detector init ({e})")
 
+    def auto_detect_shelves(self, frame: np.ndarray, padding: int = 15) -> List[dict]:
+        """
+        Dynamically discovers shelf tiers and SKU expectations from physical products
+        in the camera view without hardcoded pixel coordinates.
+        Clusters detected objects into horizontal tiers and fits shelf ROIs around them.
+        """
+        if self.model is None or frame is None:
+            return self.shelves
+
+        h, w, _ = frame.shape
+        results = self.model(frame, verbose=False, conf=0.25)
+        detected = []
+
+        if results and len(results) > 0 and results[0].boxes is not None:
+            for box in results[0].boxes:
+                cls_id = int(box.cls[0].item())
+                cls_name = self.model.names.get(cls_id, "item")
+                xyxy = box.xyxy[0].cpu().numpy()
+                cx = float((xyxy[0] + xyxy[2]) / 2.0)
+                cy = float((xyxy[1] + xyxy[3]) / 2.0)
+                detected.append({
+                    "cls_name": cls_name,
+                    "bbox": [float(x) for x in xyxy],
+                    "centroid": (cx, cy)
+                })
+
+        if not detected:
+            print("[ShelfEngine] No retail objects detected for auto-configuration.")
+            return self.shelves
+
+        # Sort detected items by vertical position (top to bottom)
+        detected.sort(key=lambda d: d["centroid"][1])
+
+        # Group items into vertical tiers (items whose cy is within 15% of frame height)
+        threshold_y = max(30.0, h * 0.15)
+        clusters = []
+        current_cluster = [detected[0]]
+
+        for item in detected[1:]:
+            prev_cy = np.mean([x["centroid"][1] for x in current_cluster])
+            if abs(item["centroid"][1] - prev_cy) <= threshold_y:
+                current_cluster.append(item)
+            else:
+                clusters.append(current_cluster)
+                current_cluster = [item]
+        if current_cluster:
+            clusters.append(current_cluster)
+
+        # Build dynamic shelf configurations for each cluster/tier
+        new_shelves = []
+        for idx, cluster in enumerate(clusters, start=1):
+            x1 = max(0, int(min(item["bbox"][0] for item in cluster) - padding))
+            y1 = max(0, int(min(item["bbox"][1] for item in cluster) - padding))
+            x2 = min(w, int(max(item["bbox"][2] for item in cluster) + padding))
+            y2 = min(h, int(max(item["bbox"][3] for item in cluster) + padding))
+
+            class_counts = Counter(item["cls_name"] for item in cluster)
+            dominant_sku, count = class_counts.most_common(1)[0]
+
+            shelf_def = {
+                "shelf_id": f"auto_shelf_tier_{idx}",
+                "zone_id": f"aisle_tier_{idx}",
+                "bounding_box": [x1, y1, x2, y2],
+                "expected_sku": dominant_sku,
+                "sku_name": f"{dominant_sku.title()} Auto-Shelf (Tier {idx})",
+                "target_count": count,
+                "min_stock_alert": max(1, count // 2)
+            }
+            new_shelves.append(shelf_def)
+
+        print(f"[ShelfEngine] Auto-configured {len(new_shelves)} shelf tier(s) successfully!")
+        self.shelves = new_shelves
+        self.config["shelves"] = new_shelves
+        return new_shelves
+
     def process_frame(self, frame: np.ndarray, current_time: float = None) -> Tuple[List[dict], List[BaseEvent]]:
         if current_time is None:
             current_time = time.time()
@@ -36,7 +121,6 @@ class ShelfEngine:
 
         if self.model is not None and frame is not None:
             try:
-                # Detect retail objects (bottle: 39, cup: 41, book: 73, etc. in COCO)
                 results = self.model(frame, verbose=False, conf=0.3)
                 if results and len(results) > 0 and results[0].boxes is not None:
                     for box in results[0].boxes:
@@ -59,13 +143,12 @@ class ShelfEngine:
         # Audit each shelf zone against planogram expectations
         for shelf in self.shelves:
             shelf_id = shelf["shelf_id"]
-            zone_id = shelf["zone_id"]
-            expected_sku = shelf["expected_sku"]
-            target_count = shelf["target_count"]
+            zone_id = shelf.get("zone_id", "aisle_shelf")
+            expected_sku = shelf.get("expected_sku", "item")
+            target_count = shelf.get("target_count", 4)
             min_stock = shelf.get("min_stock_alert", 1)
             sx1, sy1, sx2, sy2 = shelf["bounding_box"]
 
-            # Count objects whose centroid falls inside shelf bounds
             matching_count = 0
             other_sku_count = 0
             detected_sku_sample = None
@@ -81,13 +164,11 @@ class ShelfEngine:
 
             fill_ratio = matching_count / target_count if target_count > 0 else 1.0
 
-            # Debounce threshold check
             if matching_count <= 0:
                 self.consecutive_empty_frames[shelf_id] = self.consecutive_empty_frames.get(shelf_id, 0) + 1
             else:
                 self.consecutive_empty_frames[shelf_id] = 0
 
-            # Alert evaluation
             alert_type = None
             severity = "low"
             if self.consecutive_empty_frames.get(shelf_id, 0) >= 2:
@@ -127,7 +208,6 @@ class ShelfEngine:
                     payload=payload.model_dump()
                 ))
             else:
-                # Resolved
                 if shelf_id in self.active_tickets:
                     del self.active_tickets[shelf_id]
 

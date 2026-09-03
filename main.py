@@ -14,6 +14,7 @@ from team3_shelf.shelf_engine import ShelfEngine
 from team3_backend.app import app
 from dashboard.preview_hud import draw_hud_overlay
 from dashboard.cli_dashboard import run_cli_dashboard
+from core.geometry import scale_config_to_frame
 
 def get_default_config_path() -> str:
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "config", "store_config.json")
@@ -31,7 +32,6 @@ def run_backend():
 def open_capture_device(source):
     if str(source).isdigit():
         idx = int(source)
-        # Windows DirectShow backend opens cameras faster without timeout lag
         if sys.platform.startswith("win"):
             cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
             if not cap.isOpened():
@@ -42,7 +42,7 @@ def open_capture_device(source):
         cap = cv2.VideoCapture(source)
     return cap
 
-def run_vision_loop(config: dict, source, show_hud: bool = True):
+def run_vision_loop(config: dict, source, show_hud: bool = True, auto_shelf: bool = False):
     backend_url = config.get("backend_url", "http://127.0.0.1:8000")
     print(f"[Vision Engine] Initializing Camera / Video Source ({source})...")
 
@@ -51,8 +51,9 @@ def run_vision_loop(config: dict, source, show_hud: bool = True):
         print(f"[Vision Engine] Error: Could not open video source {source}. Please verify camera index.")
         return
 
-    shopper_pipeline = ShopperTrackerPipeline(config)
-    shelf_engine = ShelfEngine(config)
+    shopper_pipeline = None
+    shelf_engine = None
+    initialized = False
 
     print("[Vision Engine] Processing loop active. Press q on video window to stop.")
 
@@ -67,6 +68,17 @@ def run_vision_loop(config: dict, source, show_hud: bool = True):
             else:
                 time.sleep(0.1)
                 continue
+
+        # Dynamic Resolution Scaling & Initialization on first valid frame
+        if not initialized:
+            h, w, _ = frame.shape
+            print(f"[Vision Engine] Camera Resolution detected: {w}x{h}. Auto-scaling geometry...")
+            config = scale_config_to_frame(config, w, h)
+            shopper_pipeline = ShopperTrackerPipeline(config)
+            shelf_engine = ShelfEngine(config)
+            if auto_shelf or len(config.get("shelves", [])) == 0:
+                shelf_engine.auto_detect_shelves(frame)
+            initialized = True
 
         t_now = time.time()
 
@@ -99,14 +111,21 @@ def run_vision_loop(config: dict, source, show_hud: bool = True):
 
 def main():
     parser = argparse.ArgumentParser(description="Edge AI Retail Intelligence Platform")
-    parser.add_argument("--mode", choices=["live", "mock", "dashboard-only", "server-only"], default="live",
-                        help="Execution mode: live (camera), mock (synthetic generator), dashboard-only, server-only")
+    parser.add_argument("--mode", choices=["live", "mock", "dashboard-only", "server-only", "calibrate"], default="live",
+                        help="Execution mode: live, mock, dashboard-only, server-only, calibrate (visual zone setup)")
     parser.add_argument("--camera", default="0", help="Camera index or path to video file (default: 0)")
     parser.add_argument("--config", default=None, help="Path to store_config.json")
     parser.add_argument("--no-gui", action="store_true", help="Disable OpenCV video preview window")
+    parser.add_argument("--auto-shelf", action="store_true", help="Automatically discover shelf tiers and products from live camera")
     args = parser.parse_args()
 
-    config = load_config(args.config)
+    cfg_path = args.config or get_default_config_path()
+
+    if args.mode == "calibrate":
+        from tools.calibrate_store import VisualStoreCalibrator
+        calib = VisualStoreCalibrator(source=args.camera, config_path=cfg_path)
+        calib.run()
+        return
 
     if args.mode == "server-only":
         run_backend()
@@ -115,6 +134,8 @@ def main():
     if args.mode == "dashboard-only":
         run_cli_dashboard()
         return
+
+    config = load_config(cfg_path)
 
     # Start FastAPI server in a background daemon thread
     server_thread = threading.Thread(target=run_backend, daemon=True)
@@ -131,7 +152,7 @@ def main():
     elif args.mode == "live":
         vision_thread = threading.Thread(
             target=run_vision_loop,
-            args=(config, args.camera, not args.no_gui),
+            args=(config, args.camera, not args.no_gui, args.auto_shelf),
             daemon=True
         )
         vision_thread.start()

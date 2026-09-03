@@ -95,7 +95,28 @@ Runs real-time YOLOv8 person tracking and shelf auditing on your webcam with the
 python main.py --mode live --camera 0
 ```
 
-#### Option C: Run Server and Dashboard in Separate Terminals
+#### Option C: Interactive Visual Store Calibrator (No Hardcoded Numbers!)
+Launch the point-and-click visual GUI tool to interactively draw lines, polygons, and shelves on the camera feed:
+```bash
+python main.py --mode calibrate --camera 0
+```
+*Controls:*
+- **`[1]`**: Click 2 points on screen to place the Entrance Footfall Line.
+- **`[2]`**: Click points to draw an Aisle Polygon (`[C]` to close).
+- **`[3]`**: Click points to draw a Checkout Queue Polygon (`[C]` to close).
+- **`[4]`**: Click & drag a bounding box over a Shelf Tier.
+- **`[5]`**: Click 4 floor corners for Bird\'s-Eye Homography calibration.
+- **`[A]`**: **AI Auto-Discovery** — automatically clusters visible products into shelf tiers!
+- **`[S]`**: Save configuration directly to `config/store_config.json`.
+- **`[Q]`**: Exit calibrator.
+
+#### Option D: AI Auto-Discovery on Startup
+Point your camera at a shelf or table and automatically discover shelf tiers and target counts:
+```bash
+python main.py --mode live --camera 0 --auto-shelf
+```
+
+#### Option E: Run Server and Dashboard in Separate Terminals
 ```bash
 # Terminal 1: Start FastAPI Backend
 python main.py --mode server-only
